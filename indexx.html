@@ -1,0 +1,293 @@
+<!--
+Filename: index.html
+Description: Single-file functional frontend for healthcare monitoring.
+How to use (GitHub Pages, no build tools required):
+1. Create a new GitHub repo (public or private).
+2. Add this file as `index.html` at the repo root and commit.
+3. In the repo Settings -> Pages, set Source = `main` (or `master`) branch and Folder = `/ (root)` and Save.
+4. GitHub will publish the page at `https://<your-username>.github.io/<repo-name>/` within a minute.
+
+Notes:
+- This is a pure front-end single file (no Node, no bundler). Works in any browser.
+- The UI is responsive and uses Tailwind CDN.
+- Local storage is used to save readings; export/import JSON is supported.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Healthcare Monitoring — Frontend</title>
+  <!-- Tailwind via CDN (no build required) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* small extra styling */
+    .reading-card { min-width: 260px; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div class="max-w-5xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-semibold">Healthcare Monitoring</h1>
+      <p class="text-sm text-gray-600 mt-1">Enter patient vitals, get instant condition assessment and suggestions. Single-file app — ready for GitHub Pages.</p>
+    </header>
+
+    <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Input form -->
+      <section class="col-span-1 lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm">
+        <h2 class="text-lg font-medium mb-4">Patient Vitals</h2>
+        <form id="vitalsForm" class="space-y-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium">Blood Pressure (Systolic)</label>
+              <input id="bpSys" type="number" step="1" min="30" max="250" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 120">
+            </div>
+            <div>
+              <label class="block text-sm font-medium">Blood Pressure (Diastolic)</label>
+              <input id="bpDia" type="number" step="1" min="20" max="160" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 80">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium">Blood Sugar (mg/dL)</label>
+              <input id="sugar" type="number" step="0.1" min="20" max="1000" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 110">
+            </div>
+            <div>
+              <label class="block text-sm font-medium">Oxygen Saturation (SpO₂ %)</label>
+              <input id="oxygen" type="number" step="0.1" min="50" max="100" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 98">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium">Temperature (°C)</label>
+              <input id="temp" type="number" step="0.1" min="30" max="45" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 36.6">
+            </div>
+            <div>
+              <label class="block text-sm font-medium">Heart Rate (bpm) — optional</label>
+              <input id="hr" type="number" step="1" min="20" max="220" class="mt-1 block w-full rounded-lg border-gray-200 shadow-sm p-2" placeholder="e.g. 72">
+            </div>
+          </div>
+
+          <div class="flex gap-3 mt-4">
+            <button id="assessBtn" type="button" class="px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">Assess</button>
+            <button id="saveBtn" type="button" class="px-3 py-2 rounded-lg bg-gray-100">Save locally</button>
+            <button id="exportBtn" type="button" class="px-3 py-2 rounded-lg bg-gray-100">Export JSON</button>
+            <button id="clearBtn" type="button" class="px-3 py-2 rounded-lg bg-red-50 text-red-700">Clear</button>
+          </div>
+        </form>
+
+        <div id="notes" class="mt-4 text-sm text-gray-600"></div>
+      </section>
+
+      <!-- Results / History -->
+      <aside class="bg-white p-6 rounded-2xl shadow-sm">
+        <h2 class="text-lg font-medium">Assessment</h2>
+        <div id="resultBox" class="mt-4 p-4 rounded-lg border border-dashed border-gray-200 bg-gray-50">
+          <p id="conditionLabel" class="text-sm">No assessment yet.</p>
+          <div id="conditionDetails" class="mt-3 text-sm text-gray-700"></div>
+        </div>
+
+        <h3 class="mt-6 text-sm font-medium">Saved Readings</h3>
+        <div id="history" class="mt-3 space-y-2 max-h-56 overflow-auto"></div>
+
+        <div class="mt-4 text-xs text-gray-500">This tool is for demonstration only — not a medical device. Seek qualified medical advice for clinical decisions.</div>
+      </aside>
+    </main>
+
+    <footer class="mt-8 text-xs text-gray-500 text-center">Built for GitHub Pages — drop the single `index.html` into a repo and enable Pages.</footer>
+  </div>
+
+  <script>
+    // Utility validators
+    const $ = id => document.getElementById(id);
+
+    function parseNum(id) {
+      const v = $(id).value.trim();
+      if (v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function assessVitals(v) {
+      // v: {bpSys, bpDia, sugar, oxygen, temp, hr}
+      // Scoring: each parameter contributes 0 (normal), 1 (warning), 2 (critical)
+      const score = {bp:0, sugar:0, oxygen:0, temp:0, hr:0};
+
+      // Blood pressure — using adult general categories
+      if (v.bpSys != null && v.bpDia != null) {
+        const s = v.bpSys, d = v.bpDia;
+        if (s < 90 || d < 60) score.bp = 1; // low
+        if ((s >= 90 && s <= 120 && d >= 60 && d <= 80)) score.bp = 0; // normal
+        else if ((s > 120 && s < 140) || (d > 80 && d < 90)) score.bp = Math.max(score.bp,1);
+        else if (s >= 140 || d >= 90) score.bp = 2; // hypertensive
+      }
+
+      // Sugar (blood glucose mg/dL) --- simple fasting/ random heuristics
+      if (v.sugar != null) {
+        const g = v.sugar;
+        if (g < 70) score.sugar = 2; // hypoglycemia
+        else if (g >= 70 && g < 100) score.sugar = Math.max(score.sugar,0);
+        else if (g >= 100 && g < 200) score.sugar = Math.max(score.sugar,1);
+        else if (g >= 200) score.sugar = 2;
+      }
+
+      // Oxygen
+      if (v.oxygen != null) {
+        const o = v.oxygen;
+        if (o >= 95) score.oxygen = 0;
+        else if (o >= 92) score.oxygen = 1;
+        else score.oxygen = 2;
+      }
+
+      // Temperature (C)
+      if (v.temp != null) {
+        const t = v.temp;
+        if (t >= 36 && t <= 37.5) score.temp = 0;
+        else if ((t > 37.5 && t <= 38.5) || (t >= 35 && t < 36)) score.temp = 1;
+        else score.temp = 2;
+      }
+
+      // Heart rate
+      if (v.hr != null) {
+        const hr = v.hr;
+        if (hr >= 60 && hr <= 100) score.hr = 0;
+        else if ((hr > 100 && hr <= 120) || (hr >= 40 && hr < 60)) score.hr = 1;
+        else score.hr = 2;
+      }
+
+      // Aggregate
+      const total = score.bp + score.sugar + score.oxygen + score.temp + score.hr;
+      let level = 'Normal', color = 'green', advice = [];
+      if (total <= 1) { level = 'Normal'; color='green'; }
+      else if (total <= 3) { level = 'Mild Concern'; color='amber'; }
+      else if (total <= 6) { level = 'Warning'; color='yellow'; }
+      else { level = 'Critical'; color='red'; }
+
+      // Specific advice rules
+      if (score.oxygen === 2) advice.push('Low SpO₂ — consider supplemental oxygen and urgent evaluation.');
+      else if (score.oxygen === 1) advice.push('SpO₂ slightly low — monitor closely and consider medical check.');
+
+      if (score.sugar === 2) advice.push('Extremely low/high blood glucose — treat per hypoglycemia/hyperglycemia protocol and seek help.');
+      else if (score.sugar === 1) advice.push('Blood sugar outside normal range — re-check and consult clinician if persistent.');
+
+      if (score.bp === 2) advice.push('High blood pressure — seek medical advice; consider antihypertensive assessment.');
+      else if (score.bp === 1) advice.push('BP slightly outside normal range — monitor and re-check later.');
+
+      if (score.temp === 2) advice.push('Fever or hypothermia — urgent assessment recommended.');
+      else if (score.temp === 1) advice.push('Temperature abnormal — monitor and rest.');
+
+      if (score.hr === 2) advice.push('Abnormal heart rate — urgent evaluation suggested.');
+      else if (score.hr === 1) advice.push('Heart rate slightly abnormal — re-check and monitor.');
+
+      if (advice.length === 0) advice.push('Vitals within expected ranges for a healthy adult. Continue regular monitoring.');
+
+      return {score, total, level, color, advice};
+    }
+
+    function showResult(assessment, values) {
+      const label = $('conditionLabel');
+      const details = $('conditionDetails');
+      label.textContent = `${assessment.level} — score ${assessment.total}`;
+      label.className = 'font-semibold';
+
+      // color band
+      let bg = 'bg-green-50', border = 'border-green-200';
+      if (assessment.color === 'amber') { bg='bg-amber-50'; border='border-amber-200'; }
+      if (assessment.color === 'yellow') { bg='bg-yellow-50'; border='border-yellow-200'; }
+      if (assessment.color === 'red') { bg='bg-red-50'; border='border-red-200'; }
+
+      $('resultBox').className = `mt-4 p-4 rounded-lg border ${border} ${bg}`;
+
+      details.innerHTML = `
+        <div class="text-sm">${assessment.advice.map(a=>`<div>• ${a}</div>`).join('')}</div>
+        <hr class="my-3">
+        <div class="text-xs text-gray-600">Readings:</div>
+        <div class="text-sm text-gray-800 mt-1">
+          ${Object.entries(values).map(([k,v])=>`<div><strong>${k}</strong>: ${v===null?'-':v}</div>`).join('')}
+        </div>
+      `;
+    }
+
+    // History storage
+    function loadHistory() {
+      try {
+        const raw = localStorage.getItem('vitals_history');
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) { return []; }
+    }
+    function saveHistory(arr) { localStorage.setItem('vitals_history', JSON.stringify(arr)); }
+
+    function renderHistory() {
+      const container = $('history');
+      const hist = loadHistory().slice().reverse();
+      if (hist.length === 0) { container.innerHTML = '<div class="text-xs text-gray-500">No saved readings.</div>'; return; }
+      container.innerHTML = hist.map(entry=>{
+        const t = new Date(entry.ts).toLocaleString();
+        const badge = entry.assessment.level === 'Critical' ? '<span class="text-red-600 font-semibold">Critical</span>' : entry.assessment.level;
+        return `
+          <div class="reading-card border p-2 rounded-lg">
+            <div class="text-xs text-gray-500">${t}</div>
+            <div class="text-sm">${badge}</div>
+            <div class="text-xs text-gray-700 mt-1">BP: ${entry.values.bpSys||'-'}/${entry.values.bpDia||'-'} • Sugar: ${entry.values.sugar||'-'} • SpO₂: ${entry.values.oxygen||'-'}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Wire up
+    document.addEventListener('DOMContentLoaded', ()=>{
+      renderHistory();
+
+      $('assessBtn').addEventListener('click', ()=>{
+        const values = {
+          bpSys: parseNum('bpSys'),
+          bpDia: parseNum('bpDia'),
+          sugar: parseNum('sugar'),
+          oxygen: parseNum('oxygen'),
+          temp: parseNum('temp'),
+          hr: parseNum('hr')
+        };
+        const assessment = assessVitals(values);
+        showResult(assessment, values);
+        $('notes').textContent = '';
+      });
+
+      $('saveBtn').addEventListener('click', ()=>{
+        const values = {
+          bpSys: parseNum('bpSys'),
+          bpDia: parseNum('bpDia'),
+          sugar: parseNum('sugar'),
+          oxygen: parseNum('oxygen'),
+          temp: parseNum('temp'),
+          hr: parseNum('hr')
+        };
+        const assessment = assessVitals(values);
+        const hist = loadHistory();
+        hist.push({ts: Date.now(), values, assessment});
+        saveHistory(hist);
+        renderHistory();
+        $('notes').textContent = 'Saved to browser local storage.';
+      });
+
+      $('exportBtn').addEventListener('click', ()=>{
+        const hist = loadHistory();
+        const blob = new Blob([JSON.stringify(hist, null, 2)], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'vitals-history.json';
+        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      });
+
+      $('clearBtn').addEventListener('click', ()=>{
+        if (!confirm('Clear all saved readings from this browser?')) return;
+        localStorage.removeItem('vitals_history');
+        renderHistory();
+        $('notes').textContent = 'Local history cleared.';
+      });
+    });
+  </script>
+</body>
+</html>
